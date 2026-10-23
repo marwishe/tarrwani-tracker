@@ -1,14 +1,24 @@
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QPushButton, QLabel
-from PySide6.QtGui import QPainter, QColor, QBrush, QPen, QIcon, QPixmap
-from PySide6.QtCore import Qt, QPoint, QSize, QEvent, Signal
+"""Главное окно: безрамочное, со страницами и плавающей нижней навигацией."""
 
-from ui.widgets.sidebar import SidebarWidget
-from ui.widgets.topbar import TopBar
+from PySide6.QtCore import Qt, QEvent, Signal
+from PySide6.QtGui import QPainter, QColor, QPen, QIcon
+from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QStackedWidget
+
+from ui import theme
+from ui.widgets.nav_bar import NavBar
+from ui.widgets.title_bar import TitleBar
+from ui.widgets.sidegrip import SideGrip
 from ui.pages.focus_page import FocusPage
 from ui.pages.stats_page import StatsPage
 from ui.pages.marathon_page import MarathonPage
-from ui.widgets.sidegrip import SideGrip
-from config import APP_BORDER_RADIUS, COLOR_BG_PRIMARY, COLOR_BG_NAV, COLOR_TEXT_SECONDARY, ASSETS_DIR, ICON_PATH, APP_NAME
+
+try:
+    from config import APP_NAME, ICON_PATH
+except Exception:   # интерфейс должен запускаться и без config
+    APP_NAME, ICON_PATH = "Tarrwani Tracker", None
+
+WINDOW_RADIUS = 12
+GRIP = 6   # толщина полос изменения размера
 
 
 class MainWindow(QWidget):
@@ -16,199 +26,110 @@ class MainWindow(QWidget):
 
     def __init__(self):
         super().__init__()
+        theme.apply_app_style(QApplication.instance())
+
+        self.setWindowTitle(APP_NAME)
+        if ICON_PATH is not None and ICON_PATH.exists():
+            self.setWindowIcon(QIcon(str(ICON_PATH)))
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setMinimumSize(600, 400)
-        self.resize(800, 600)
+        self.setMinimumSize(560, 520)
+        self.resize(960, 680)
+
         self._setup_ui()
 
-    def _setup_ui(self):
-        root = QHBoxLayout(self)
+    def _setup_ui(self) -> None:
+        root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
 
-        # Sidebar — слева, на всю высоту окна
-        self.sidebar = SidebarWidget()
-        self.sidebar.view_changed.connect(self._on_view_changed)
-        root.addWidget(self.sidebar)
-
-        # Колонка контента (topbar + страницы)
-        content_column = QVBoxLayout()
-        content_column.setContentsMargins(0, 0, 0, 0)
-        content_column.setSpacing(0)
-
-        self.topbar = TopBar(self)
-        content_column.addWidget(self.topbar)
-
-        self.pages = QStackedWidget()
+        # страницы (порядок совпадает с кнопками навигации)
         self.focus_page = FocusPage()
         self.stats_page = StatsPage()
         self.marathon_page = MarathonPage()
         self.stats_page.set_projects(self.focus_page.projects)
+
+        self.pages = QStackedWidget()
         self.pages.addWidget(self.focus_page)
         self.pages.addWidget(self.stats_page)
         self.pages.addWidget(self.marathon_page)
-        content_column.addWidget(self.pages, stretch=1)
+        root.addWidget(self.pages)
 
-        root.addLayout(content_column, stretch=1)
+        # плавающие элементы поверх страниц
+        self.title_bar = TitleBar(self)
+        self.nav = NavBar([
+            ("home", "Фокус"),
+            ("chart", "Статистика"),
+            ("stopwatch", "Марафон"),
+        ], self)
+        self.nav.changed.connect(self._on_view_changed)
 
-        # Связываем сигналы
-        self.topbar.sig_close.connect(self.close)
-        self.topbar.sig_minimize.connect(self.showMinimized)
-        self.topbar.sig_fullscreen.connect(self._toggle_fullscreen)
+        self._grips = []
+        for edges, cursor in [
+            (Qt.Edge.TopEdge, Qt.CursorShape.SizeVerCursor),
+            (Qt.Edge.BottomEdge, Qt.CursorShape.SizeVerCursor),
+            (Qt.Edge.LeftEdge, Qt.CursorShape.SizeHorCursor),
+            (Qt.Edge.RightEdge, Qt.CursorShape.SizeHorCursor),
+            (Qt.Edge.TopEdge | Qt.Edge.LeftEdge, Qt.CursorShape.SizeFDiagCursor),
+            (Qt.Edge.TopEdge | Qt.Edge.RightEdge, Qt.CursorShape.SizeBDiagCursor),
+            (Qt.Edge.BottomEdge | Qt.Edge.LeftEdge, Qt.CursorShape.SizeBDiagCursor),
+            (Qt.Edge.BottomEdge | Qt.Edge.RightEdge, Qt.CursorShape.SizeFDiagCursor),
+        ]:
+            self._grips.append(SideGrip(self, edges, cursor))
 
-        # Hamburger menu — дочерний элемент MainWindow, позиция (10, 5)
-        self._menu_btn = QPushButton(self)
-        self._menu_btn.setIcon(QIcon(str(ASSETS_DIR / "menu.svg")))
-        self._menu_btn.setIconSize(QSize(20, 20))
-        self._menu_btn.setFixedSize(48, 32)
-        self._menu_btn.move(10, 5)
-        self._menu_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._menu_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                border: none;
-                border-radius: 6px;
-                color: #aaaaaa;
-            }}
-            QPushButton:hover {{ background: {COLOR_BG_NAV}; color: #ffffff; }}
-        """)
-        self._menu_btn.clicked.connect(self.sidebar.toggle)
-        self._menu_btn.raise_()
-
-        # Icon — абсолютная позиция рядом с гамбургером
-        self._icon_lbl = QLabel(self)
-        self._icon_lbl.setStyleSheet("background: transparent;")
-        pixmap = QPixmap(str(ICON_PATH))
-        if not pixmap.isNull():
-            self._icon_lbl.setFixedSize(24, 24)
-            self._icon_lbl.setPixmap(
-                pixmap.scaled(18, 18,
-                              Qt.AspectRatioMode.KeepAspectRatio,
-                              Qt.TransformationMode.SmoothTransformation)
-            )
-        else:
-            self._icon_lbl.setFixedSize(0, 0)
-        self._icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._icon_lbl.move(72, 9)
-        self._icon_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self._icon_lbl.raise_()
-
-        # App name — абсолютная позиция рядом с иконкой
-        self._title_lbl = QLabel(APP_NAME, self)
-        self._title_lbl.setStyleSheet(
-            f"color: {COLOR_TEXT_SECONDARY}; font-size: 13px; background: transparent; padding: 0;"
-        )
-        self._title_lbl.move(102, 6)
-        self._title_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self._title_lbl.raise_()
-
-        # Грипы ресайза
-        self._setup_resizers()
+        self.title_bar.raise_()
+        self.nav.raise_()
+        for grip in self._grips:
+            grip.raise_()
 
         self.sig_window_minimized.connect(self.focus_page._on_window_minimized)
         self.sig_window_minimized.connect(self.marathon_page._on_window_minimized)
 
-    def _setup_resizers(self):
-        self._grips = {}
-        grip_configs = [
-            ('T',  Qt.CursorShape.SizeVerCursor),
-            ('B',  Qt.CursorShape.SizeVerCursor),
-            ('L',  Qt.CursorShape.SizeHorCursor),
-            ('R',  Qt.CursorShape.SizeHorCursor),
-            ('TL', Qt.CursorShape.SizeFDiagCursor),
-            ('TR', Qt.CursorShape.SizeBDiagCursor),
-            ('BL', Qt.CursorShape.SizeBDiagCursor),
-            ('BR', Qt.CursorShape.SizeFDiagCursor),
-        ]
-        for pos, cursor in grip_configs:
-            grip = SideGrip(self, pos, cursor)
-            self._grips[pos] = grip
-            grip.raise_()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        #if hasattr(self, 'topbar'):
-            #self.topbar.setGeometry(0, 0, self.width(), 42)
-        #if hasattr(self, 'sidebar'):
-            #self.sidebar.setGeometry(0, 0, self.sidebar.width(), self.height())
-        if hasattr(self, '_grips'):
-            is_fs = self.isFullScreen()
-            t = 6
-            w, h = self.width(), self.height()
-
-            for grip in self._grips.values():
-                grip.setVisible(not is_fs)
-
-            if not is_fs:
-                self._grips['T'].setGeometry(t, 0, w - 2*t, t)
-                self._grips['B'].setGeometry(t, h - t, w - 2*t, t)
-                self._grips['L'].setGeometry(0, t, t, h - 2*t)
-                self._grips['R'].setGeometry(w - t, t, t, h - 2*t)
-                self._grips['TL'].setGeometry(0, 0, t, t)
-                self._grips['TR'].setGeometry(w - t, 0, t, t)
-                self._grips['BL'].setGeometry(0, h - t, t, t)
-                self._grips['BR'].setGeometry(w - t, h - t, t, t)
-
-    def _start_resize(self, position: str, global_press_pos: QPoint):
-        self._resize_pos = position
-        self._resize_start_geom = self.geometry()
-        self._resize_start_global = global_press_pos
-
-    def _drag_resize(self, global_current_pos: QPoint):
-        if self.isFullScreen() or not hasattr(self, '_resize_pos'):
-            return
-
-        geom = self._resize_start_geom
-        x, y, w, h = geom.x(), geom.y(), geom.width(), geom.height()
-        min_w, min_h = self.minimumSize().width(), self.minimumSize().height()
-
-        delta = global_current_pos - self._resize_start_global
-        dx, dy = delta.x(), delta.y()
-
-        position = self._resize_pos
-
-        if 'L' in position:
-            max_dx = w - min_w
-            actual_dx = min(dx, max_dx)
-            x += actual_dx
-            w -= actual_dx
-        elif 'R' in position:
-            w = max(min_w, w + dx)
-
-        if 'T' in position:
-            max_dy = h - min_h
-            actual_dy = min(dy, max_dy)
-            y += actual_dy
-            h -= actual_dy
-        elif 'B' in position:
-            h = max(min_h, h + dy)
-
-        self.setGeometry(x, y, w, h)
-
-    def _on_view_changed(self, index: int):
+    # ── Навигация ──────────────────────────────────────────────
+    def _on_view_changed(self, index: int) -> None:
         self.pages.setCurrentIndex(index)
         if index == 1:
             self.stats_page.set_projects(self.focus_page.projects)
 
-    def _toggle_fullscreen(self):
-        if self.isFullScreen():
+    # ── Окно ───────────────────────────────────────────────────
+    def toggle_maximize(self) -> None:
+        if self.isMaximized():
             self.showNormal()
         else:
-            self.showFullScreen()
+            self.showMaximized()
+
+    def _is_free_form(self) -> bool:
+        return not (self.isMaximized() or self.isFullScreen())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        w, h = self.width(), self.height()
+
+        self.title_bar.setGeometry(0, 0, w, self.title_bar.height())
+        self.nav.move((w - self.nav.width()) // 2, h - self.nav.height() - 22)
+
+        g = GRIP
+        areas = [
+            (g, 0, w - 2 * g, g), (g, h - g, w - 2 * g, g),
+            (0, g, g, h - 2 * g), (w - g, g, g, h - 2 * g),
+            (0, 0, g, g), (w - g, 0, g, g), (0, h - g, g, g), (w - g, h - g, g, g),
+        ]
+        for grip, rect in zip(self._grips, areas):
+            grip.setGeometry(*rect)
+            grip.setVisible(self._is_free_form())
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.WindowStateChange:
-            minimized = self.windowState() & Qt.WindowState.WindowMinimized
-            self.sig_window_minimized.emit(bool(minimized))
+            self.sig_window_minimized.emit(bool(self.windowState() & Qt.WindowState.WindowMinimized))
+            self.title_bar.set_maximized(self.isMaximized())
+            for grip in self._grips:
+                grip.setVisible(self._is_free_form())
+            self.update()
         super().changeEvent(event)
 
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setBrush(QBrush(QColor(COLOR_BG_PRIMARY)))
-        painter.setPen(QPen(Qt.PenStyle.NoPen))
-        painter.drawRoundedRect(
-            self.rect().adjusted(0, 0, -1, -1),
-            APP_BORDER_RADIUS, APP_BORDER_RADIUS
-        )
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        radius = WINDOW_RADIUS if self._is_free_form() else 0
+        p.setPen(QPen(QColor("#252528"), 1))
+        p.setBrush(QColor(theme.BG))
+        p.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), radius, radius)
