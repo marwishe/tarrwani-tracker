@@ -11,11 +11,11 @@ them however it likes.
 from __future__ import annotations
 
 import os
-import subprocess
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from core.afk_detector import AFKMonitor
+from core.script_runner import run_script
 
 # How many seconds of inactivity before the timer is considered "AFK".
 AFK_THRESHOLD_SEC = 60
@@ -203,13 +203,7 @@ class TimerEngine(QObject):
         env["ELAPSED_MIN"] = str(self._phase_total // 60)
 
         try:
-            subprocess.Popen(
-                code,
-                shell=True,
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+            run_script(code, env)   # shell на Windows, bash на Linux/macOS
         except Exception as exc:  # pragma: no cover - best effort
             print(f"[TimerEngine] script '{trigger}' failed: {exc}")
 
