@@ -1,4 +1,4 @@
-"""Диалог подтверждения/сообщения в стиле приложения."""
+"""Диалоги в стиле приложения: базовая карточка и подтверждение/сообщение."""
 
 from PySide6.QtCore import Qt, QPoint
 from PySide6.QtGui import QColor
@@ -8,8 +8,10 @@ from ui import theme
 from ui.widgets.basic import Card, PillButton, label
 
 
-class ConfirmDialog(QDialog):
-    def __init__(self, parent, title, text, ok_text="ОК", cancel_text="Отмена", danger=False):
+class CardDialog(QDialog):
+    """Безрамочный диалог-карточка с тенью. Содержимое добавляется в self.card.body."""
+
+    def __init__(self, parent, width: int = 380, margins=(26, 24, 26, 22)):
         super().__init__(parent, Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setModal(True)
@@ -17,18 +19,29 @@ class ConfirmDialog(QDialog):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(30, 24, 30, 40)   # место под тень
 
-        card = Card(margins=(26, 24, 26, 22))
-        card.setFixedWidth(380)
-        shadow = QGraphicsDropShadowEffect(card)
+        self.card = Card(margins=margins)
+        self.card.setFixedWidth(width)
+        shadow = QGraphicsDropShadowEffect(self.card)
         shadow.setBlurRadius(40)
         shadow.setOffset(0, 10)
         shadow.setColor(QColor(0, 0, 0, 180))
-        card.setGraphicsEffect(shadow)
-        outer.addWidget(card)
+        self.card.setGraphicsEffect(shadow)
+        outer.addWidget(self.card)
 
-        card.body.addWidget(label(title, 20, theme.TEXT, 700))
-        card.body.addWidget(label(text, 14, theme.TEXT_SECOND, 400, wrap=True))
-        card.body.addSpacing(6)
+    def center_on(self, parent) -> None:
+        self.adjustSize()
+        if parent is not None:
+            center = parent.window().frameGeometry().center()
+            self.move(center - QPoint(self.width() // 2, self.height() // 2))
+
+
+class ConfirmDialog(CardDialog):
+    def __init__(self, parent, title, text, ok_text="ОК", cancel_text="Отмена", danger=False):
+        super().__init__(parent)
+        body = self.card.body
+        body.addWidget(label(title, 20, theme.TEXT, 700))
+        body.addWidget(label(text, 14, theme.TEXT_SECOND, 400, wrap=True))
+        body.addSpacing(6)
 
         buttons = QHBoxLayout()
         buttons.setSpacing(10)
@@ -41,22 +54,16 @@ class ConfirmDialog(QDialog):
         ok.setDefault(True)
         ok.clicked.connect(self.accept)
         buttons.addWidget(ok)
-        card.body.addLayout(buttons)
-
-    def _center_on(self, parent) -> None:
-        self.adjustSize()
-        if parent is not None:
-            center = parent.window().frameGeometry().center()
-            self.move(center - QPoint(self.width() // 2, self.height() // 2))
+        body.addLayout(buttons)
 
     @staticmethod
     def ask(parent, title, text, ok_text="ОК", cancel_text="Отмена", danger=False) -> bool:
         dlg = ConfirmDialog(parent, title, text, ok_text, cancel_text, danger)
-        dlg._center_on(parent)
+        dlg.center_on(parent)
         return dlg.exec() == QDialog.DialogCode.Accepted
 
     @staticmethod
     def info(parent, title, text, ok_text="Хорошо") -> None:
         dlg = ConfirmDialog(parent, title, text, ok_text, cancel_text=None)
-        dlg._center_on(parent)
+        dlg.center_on(parent)
         dlg.exec()

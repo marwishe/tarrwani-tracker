@@ -7,16 +7,8 @@ from PySide6.QtWidgets import (
 
 from ui import theme
 from ui.icons import icon
-from ui.widgets.basic import IconButton, ElidedLabel, label
-
-
-def _running_process_names() -> list[str]:
-    """Имена запущенных процессов для автодополнения (если доступен core)."""
-    try:
-        from core.process_tracker import ProcessTracker
-        return ProcessTracker.get_unique_process_names()
-    except Exception:
-        return []
+from ui.widgets.basic import IconButton, ElidedLabel, label, clear_layout
+from ui.widgets.process_picker import ProcessPickerDialog, running_process_names
 
 
 class TagInput(QWidget):
@@ -33,7 +25,7 @@ class TagInput(QWidget):
         row = QHBoxLayout()
         row.setSpacing(8)
         self._input = QLineEdit()
-        self._input.setPlaceholderText("Имя процесса, например chrome.exe")
+        self._input.setPlaceholderText("Имя процесса — Enter, или «+» для выбора")
         self._input.setFixedHeight(42)
         self._input.setStyleSheet(f"""
             QLineEdit {{
@@ -49,8 +41,8 @@ class TagInput(QWidget):
 
         add_btn = IconButton("plus", 42, 20, "#ffffff", "#ffffff", bg=theme.ACCENT,
                              hover_bg=theme.ACCENT_HOVER)
-        add_btn.setToolTip("Добавить")
-        add_btn.clicked.connect(self._add_current)
+        add_btn.setToolTip("Выбрать из запущенных процессов")
+        add_btn.clicked.connect(self._open_picker)
         row.addWidget(add_btn)
         root.addLayout(row)
 
@@ -62,7 +54,7 @@ class TagInput(QWidget):
         self._rebuild()
 
     def _setup_completer(self) -> None:
-        completer = QCompleter(QStringListModel(_running_process_names(), self), self)
+        completer = QCompleter(QStringListModel(running_process_names(), self), self)
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         completer.setFilterMode(Qt.MatchFlag.MatchContains)
         completer.popup().setStyleSheet(f"""
@@ -99,6 +91,14 @@ class TagInput(QWidget):
         self._add(self._input.text())
         self._input.clear()
 
+    def _open_picker(self) -> None:
+        """Окно со списком запущенных процессов; введённый текст — как поиск."""
+        names = ProcessPickerDialog.pick(self, self._selected, self._input.text())
+        for name in names:
+            self._add(name)
+        if names:
+            self._input.clear()
+
     def _on_completer(self, text: str) -> None:
         self._add(text)
         QTimer.singleShot(0, self._input.clear)
@@ -110,7 +110,6 @@ class TagInput(QWidget):
 
     # ── Список ─────────────────────────────────────────────────
     def _rebuild(self) -> None:
-        from ui.widgets.basic import clear_layout
         clear_layout(self._list)
 
         if not self._selected:

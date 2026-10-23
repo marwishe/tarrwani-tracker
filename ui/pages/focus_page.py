@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedWidget
 from ui import theme
 from core.timer_engine import TimerEngine
 from core.process_tracker import ProcessTracker
+from core.notifier import Notifier
 from ui.widgets.basic import (
     PillButton, make_scroll, centered, label, clear_layout,
 )
@@ -42,6 +43,8 @@ class FocusPage(QWidget):
         self._engine = TimerEngine(self)
         self._engine.sig_tick.connect(self._on_engine_tick)
         self._engine.sig_finished.connect(self._on_engine_finished)
+        self._engine.sig_phase_changed.connect(self._on_phase_changed)
+        self._notifier = Notifier(self)
 
         self._proc_tracker: ProcessTracker | None = None
         self._session_accumulator: dict[str, int] = {}
@@ -257,9 +260,31 @@ class FocusPage(QWidget):
             else:
                 self._proc_tracker.resume()
 
+    def _on_phase_changed(self, phase: str) -> None:
+        """Фокус закончился (phase == "break") или закончился перерыв (phase == "focus")."""
+        project = self._engine.project or {}
+        if not project.get("notifications", True):
+            return
+        state = self._engine.state()
+        name = project.get("name", "проект")
+        cycle_info = f"Цикл {state['cycle']} из {state['total_cycles']}."
+
+        if phase == "break":
+            self._notifier.notify(
+                "Фокус завершён",
+                f"«{name}»: пора отдохнуть — перерыв {project.get('break_min', 5)} мин. {cycle_info}",
+            )
+        else:
+            self._notifier.notify(
+                "Перерыв окончен",
+                f"«{name}»: пора за работу — фокус {project.get('focus_min', 25)} мин. {cycle_info}",
+            )
+
     def _on_engine_finished(self) -> None:
         project = self._projects[self._running_index] if self._running_index is not None else {}
         name = project.get("name", "проект")
+        if project.get("notifications", True):
+            self._notifier.notify("Таймер завершён", f"«{name}»: все циклы завершены!")
 
         self._stop_process_tracking()
         self._active_wrap.setVisible(False)

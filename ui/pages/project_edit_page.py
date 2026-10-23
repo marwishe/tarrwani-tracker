@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from ui import theme
+from core.script_runner import shell_name, env_var, placeholder
 from ui.icons import icon
 from ui.widgets.basic import (
     Card, PillButton, IconButton, Segmented, Stepper, ToggleSwitch, Dropdown,
@@ -64,7 +65,7 @@ class _ScriptEntry(QWidget):
         v.addLayout(head)
 
         self.editor = QPlainTextEdit()
-        self.editor.setPlaceholderText("# команды bash/shell\n# например: notify-send \"Фокус завершён\"")
+        self.editor.setPlaceholderText(placeholder())
         self.editor.setFixedHeight(90)
         self.editor.setPlainText(command)
         self.editor.setStyleSheet(f"""
@@ -104,6 +105,7 @@ class ProjectEditPage(QWidget):
         self._break_wheel.set_value(p.get("break_min", 5))
         self._cycles.set_value(p.get("cycles", 4))
         self._afk_toggle.setChecked(p.get("afk_tracking", False))
+        self._notify_toggle.setChecked(p.get("notifications", True))
         self._tags.set_tracked(p.get("tracked_processes", []))
 
         for entry in list(self._scripts):
@@ -229,6 +231,18 @@ class ProjectEditPage(QWidget):
         card.body.addLayout(row)
         card.body.addWidget(hint_label(
             "Цикл — это период фокуса и перерыв. Последний цикл заканчивается без перерыва."))
+        card.body.addWidget(_divider())
+
+        row = QHBoxLayout()
+        info = QVBoxLayout()
+        info.setSpacing(2)
+        info.addWidget(label("Уведомления", 16, theme.TEXT, 600))
+        info.addWidget(hint_label("Сообщение, когда закончится фокус или перерыв."))
+        row.addLayout(info, 1)
+        self._notify_toggle = ToggleSwitch()
+        self._notify_toggle.setChecked(True)
+        row.addWidget(self._notify_toggle)
+        card.body.addLayout(row)
         return card
 
     # ── Дополнительно (сворачиваемая карточка) ─────────────────
@@ -271,9 +285,10 @@ class ProjectEditPage(QWidget):
         b.addWidget(_divider())
 
         # скрипты
-        b.addWidget(label("Скрипты bash / shell", 15, theme.TEXT, 600))
-        b.addWidget(hint_label("Выполняются при выбранном событии. "
-                               "Доступны переменные $PROJECT_NAME, $CYCLE, $ELAPSED_MIN."))
+        b.addWidget(label(f"Скрипты {shell_name()}", 15, theme.TEXT, 600))
+        b.addWidget(hint_label(
+            "Выполняются при выбранном событии. Переменные: "
+            f"{env_var('PROJECT_NAME')}, {env_var('CYCLE')}, {env_var('ELAPSED_MIN')}."))
         self._scripts_layout = QVBoxLayout()
         self._scripts_layout.setSpacing(14)
         b.addLayout(self._scripts_layout)
@@ -337,6 +352,7 @@ class ProjectEditPage(QWidget):
             "break_min": self._break_wheel.value(),
             "cycles": self._cycles.value(),
             "afk_tracking": self._afk_toggle.isChecked(),
+            "notifications": self._notify_toggle.isChecked(),
             "tracked_processes": self._tags.get_tracked(),
             "scripts": scripts,
         })
