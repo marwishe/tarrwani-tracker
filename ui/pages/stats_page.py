@@ -4,17 +4,20 @@ import time
 from collections import defaultdict
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QRectF
-from PySide6.QtGui import QPainter, QColor, QPen
+from PySide6.QtCore import Qt, QRectF, QUrl
+from PySide6.QtGui import QPainter, QColor, QPen, QDesktopServices
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QSizePolicy
 
 from ui import theme
+from core import storage
 from ui.theme import make_font
 from ui.widgets.basic import (
-    Card, Segmented, make_scroll, centered, label, page_title, clear_layout,
+    Card, Segmented, PillButton, make_scroll, centered, label, page_title, clear_layout,
 )
 
 COLUMN_W = 760
+HISTORY_COMPACT = 5     # сколько сессий видно в свёрнутом списке
+HISTORY_MAX = 200       # предел для развёрнутого списка
 
 _PERIOD_LABELS = ["День", "Неделя", "Месяц", "Всё время"]
 _DAY = 86400
@@ -142,6 +145,8 @@ class StatsPage(QWidget):
         super().__init__(parent)
         self._projects: list[dict] = []
         self._period_idx = 3
+        self._history_expanded = False
+        self._sessions: list[dict] = []
         self._setup_ui()
 
     def set_projects(self, projects: list[dict]) -> None:
@@ -213,7 +218,12 @@ class StatsPage(QWidget):
 
     def _on_period(self, idx: int) -> None:
         self._period_idx = idx
+        self._history_expanded = False
         self._refresh()
+
+    def _toggle_history(self) -> None:
+        self._history_expanded = not self._history_expanded
+        self._fill_history(self._sessions)
 
     # ── Данные ─────────────────────────────────────────────────
     def _refresh(self) -> None:
@@ -271,25 +281,56 @@ class StatsPage(QWidget):
             box.addWidget(item)
 
     def _fill_history(self, sessions: list[dict]) -> None:
+        self._sessions = sessions
         clear_layout(self._history_box)
-        if not sessions:
-            self._history_box.addWidget(label("Нет завершённых сессий", 13, theme.TEXT_MUTED))
-            return
 
         newest_first = sorted(sessions, key=lambda s: s.get("timestamp", 0), reverse=True)
-        for s in newest_first[:50]:
-            apps = sorted(s.get("process_log", {}).items(), key=lambda kv: -kv[1])[:3]
-            sub = fmt_ts(s["timestamp"]) if s.get("timestamp") else "—"
-            if apps:
-                sub += "  ·  " + ", ".join(f"{n} {fmt_duration(v)}" for n, v in apps)
+        limit = HISTORY_MAX if self._history_expanded else HISTORY_COMPACT
 
+        if not sessions:
+            self._history_box.addWidget(label("Нет завершённых сессий", 13, theme.TEXT_MUTED))
+
+        for s in newest_first[:limit]:
+            # одна компактная строка: проект · время · длительность
             row = QWidget()
             h = QHBoxLayout(row)
-            h.setContentsMargins(0, 9, 0, 9)
-            left = QVBoxLayout()
-            left.setSpacing(2)
-            left.addWidget(label(s.get("project_name", "—"), 14, theme.TEXT, 600))
-            left.addWidget(label(sub, 12, theme.TEXT_MUTED))
-            h.addLayout(left, 1)
-            h.addWidget(label(fmt_duration(session_secs(s)), 14, theme.ACCENT, 700))
+            h.setContentsMargins(0, 7, 0, 7)
+            h.setSpacing(12)
+            h.addWidget(label(s.get("project_name", "—"), 14, theme.TEXT, 600), 1)
+            h.addWidget(label(fmt_ts(s["timestamp"]) if s.get("timestamp") else "—",
+                              12, theme.TEXT_MUTED))
+            duration = label(fmt_duration(session_secs(s)), 14, theme.ACCENT, 700)
+            duration.setMinimumWidth(64)
+            duration.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            h.addWidget(duration)
+
+            # приложения — во всплывающей подсказке
+            apps = sorted(s.get("process_log", {}).items(), key=lambda kv: -kv[1])[:5]
+            if apps:
+                row.setToolTip("\n".join(f"{n}: {fmt_duration(v)}" for n, v in apps))
             self._history_box.addWidget(row)
+
+        # кнопки внизу: «показать все / свернуть» и «открыть папку с данными»
+        footer = QHBoxLayout()
+        footer.setSpacing(8)
+        footer.addStretch()
+        if len(sessions) > HISTORY_COMPACT:
+            text = "Свернуть" if self._history_expanded else f"Показать все ({len(sessions)})"
+            toggle = PillButton(text, "ghost",
+                                "chevron-up" if self._history_expanded else "chevron-down",
+                                height=40)
+            toggle.clicked.connect(self._toggle_history)
+            footer.addWidget(toggle)
+        folder = PillButton("Папка с данными", "ghost", "folder", height=40)
+        folder.setToolTip(str(storage.sessions_dir()))
+        folder.clicked.connect(self._open_data_folder)
+        footer.addWidget(folder)
+        footer.addStretch()
+        self._history_box.addSpacing(6)
+        self._history_box.addLayout(footer)
+
+    def _open_data_folder(self) -> None:
+        """Открыть папку sessions в проводнике (её можно синхронизировать)."""
+        folder = storage.sessions_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
