@@ -10,6 +10,7 @@ from ui import theme
 from core.timer_engine import TimerEngine
 from core.process_tracker import ProcessTracker
 from core.notifier import Notifier
+from core import storage
 from ui.widgets.basic import (
     PillButton, make_scroll, centered, label, clear_layout,
 )
@@ -35,7 +36,7 @@ class FocusPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._projects: list[dict] = []
+        self._projects: list[dict] = storage.load_projects()   # проекты и сессии с диска
         self._cards: list[ProjectCard] = []
         self._edit_index: int | None = None     # None — создаём новый проект
         self._running_index: int | None = None  # проект, у которого идёт таймер
@@ -51,6 +52,7 @@ class FocusPage(QWidget):
         self._session_elapsed = 0
 
         self._setup_ui()
+        self._rebuild_cards()
 
         # часы наверху страницы
         self._clock_timer = QTimer(self)
@@ -62,6 +64,10 @@ class FocusPage(QWidget):
     @property
     def projects(self) -> list[dict]:
         return self._projects
+
+    def reload_sessions(self) -> None:
+        """Перечитать сессии с диска (подхватывает данные, пришедшие через синхронизацию)."""
+        storage.attach_sessions(self._projects)
 
     # ── Построение интерфейса ──────────────────────────────────
     def _setup_ui(self) -> None:
@@ -162,6 +168,7 @@ class FocusPage(QWidget):
             self._projects.append(project)
         else:
             self._projects[self._edit_index] = project
+        storage.save_projects(self._projects)
         self._rebuild_cards()
         self._show_list()
 
@@ -172,10 +179,14 @@ class FocusPage(QWidget):
                                f"Таймер проекта «{name}» сейчас запущен. Сначала остановите его.")
             return
         if not ConfirmDialog.ask(self, "Удалить проект",
-                                 f"Удалить «{name}»? Это действие нельзя отменить.",
+                                 f"Удалить «{name}»? Проект и вся история его сессий "
+                                 "будут удалены без возможности восстановления.",
                                  ok_text="Удалить", danger=True):
             return
-        self._projects.pop(index)
+        self.reload_sessions()   # учесть сессии, пришедшие через синхронизацию
+        removed = self._projects.pop(index)
+        storage.delete_project_sessions(removed)
+        storage.save_projects(self._projects)
         if self._running_index is not None and self._running_index > index:
             self._running_index -= 1
         self._rebuild_cards()
@@ -229,13 +240,15 @@ class FocusPage(QWidget):
         if save_to_project and self._running_index is not None:
             project = self._projects[self._running_index]
             planned = int(project.get("focus_min", 25)) * 60 * int(project.get("cycles", 1))
-            project.setdefault("sessions", []).append({
+            session = {
                 "process_log": log,
                 "timestamp": time.time(),
                 "project_name": project.get("name", ""),
                 "planned_secs": planned,
                 "actual_secs": self._session_elapsed,
-            })
+            }
+            project.setdefault("sessions", []).append(session)
+            storage.save_session(project, session)   # отдельный файл в папке sessions
         self._session_accumulator.clear()
         self._session_elapsed = 0
         return log

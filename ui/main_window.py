@@ -88,6 +88,7 @@ class MainWindow(QWidget):
     def _on_view_changed(self, index: int) -> None:
         self.pages.setCurrentIndex(index)
         if index == 1:
+            self.focus_page.reload_sessions()
             self.stats_page.set_projects(self.focus_page.projects)
 
     # ── Окно ───────────────────────────────────────────────────
